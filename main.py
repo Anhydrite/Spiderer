@@ -1,7 +1,5 @@
-from distutils.command import clean
-from enum import Enum, EnumMeta
-import sys
-from typing import Any, List, Optional, Self, Set, Tuple, Type, TypeAlias
+from enum import Enum
+from typing import Any, List, Optional, Self, Set, Tuple, TypeAlias, cast
 import requests
 import re
 import urllib3
@@ -63,8 +61,8 @@ class Url:
         domain: str = self.base_url.split("://")[1]
 
         domain_regex: re.Pattern[str] = re.compile(r"[a-z\.]*")
-        domain = domain_regex.match(domain)
-        return domain.string
+        domain = domain_regex.match(domain).string  # type: ignore
+        return domain
 
     @staticmethod
     def validate_url(url: str) -> bool:
@@ -87,11 +85,17 @@ class Url:
         """Because we can have www.google.fr and www.google.fr/ that are not differents links but www.google.fr/test is different from www.google.fr/test/"""
         return hash(path_without_slash)
 
-    def __eq__(self, other):
-        return self.path == other.path
+    def __eq__(self, __value) -> bool:
+        if not hasattr(__value, "path"):
+            return False
+
+        return self.path == __value.path  # type: ignore
 
     def __ne__(self, __value: object) -> bool:
-        return self.path != __value.path
+        if not hasattr(__value, "path"):
+            return False
+
+        return self.path != __value.path  # type: ignore
 
 
 class ParsingResult:
@@ -139,7 +143,7 @@ class Link:
         return cls(url, match_type, parsing_result.from_url)
 
     @classmethod
-    def from_full_url(cls, url: Url):
+    def from_full_url(cls, url: Url) -> Self:
         return cls(url.path)
 
     def __str__(self) -> str:
@@ -149,10 +153,16 @@ class Link:
         return self.__str__()
 
     def __eq__(self, __value: object) -> bool:
-        return self.path == __value.path
+        if not hasattr(__value, "path"):
+            return False
+
+        return self.path == __value.path  # type: ignore
 
     def __ne__(self, __value: object) -> bool:
-        return self.path == __value.path
+        if not hasattr(__value, "path"):
+            return False
+
+        return self.path == __value.path  # type: ignore
 
     def __hash__(self) -> int:
         return hash(f"{self.from_url}{self.path}")
@@ -168,26 +178,23 @@ class Spiderer:
         self.session: requests.Session = requests.Session()
 
     @property
-    def domain(self):
+    def domain(self) -> str:
         return self.website_url.domain
 
-    def scrap(self):
+    def scrap(self) -> set[Url]:
         scrapped_url: Set[Url] = set()
         to_be_scrapped: Set[Link] = set([Link.from_full_url(self.website_url)])
-        count = 0
         while len(to_be_scrapped) > 0:
-            count = count + 1
-            # if count > 4:
-            #     break
             current_link: Link = to_be_scrapped.pop()
             scrapped_url.add(current_link.url)
+
             if current_link.url.domain != self.domain:
                 continue
 
             found_links: List[Link] = self.parse(current_link.url)
 
             for link in found_links:
-                url = link.url
+                url: Url = link.url
 
                 if url in scrapped_url:
                     continue
@@ -196,6 +203,7 @@ class Spiderer:
                     continue
 
                 to_be_scrapped.add(link)
+
         print(f"Parsing done. Found {len(scrapped_url)} urls !")
 
         return scrapped_url
@@ -208,12 +216,12 @@ class Spiderer:
             raise ValueError("The target is not accessible")
 
         response.encoding = "utf-8"
-        response.url = Url(response.url)
+        response.url = Url(response.url)  # type: ignore
         urls: list[Link] = self._find_urls(response)
         return urls
 
     def _find_urls(self, response: requests.Response) -> list[Link]:
-        links = self._parse_with_regex(response)
+        links: list[ParsingResult] = self._parse_with_regex(response)
 
         links_obj: List[Link] = []
         for raw_link in links:
@@ -221,8 +229,8 @@ class Spiderer:
 
         return links_obj
 
-    def _parse_with_regex(self, response: requests.Response):
-        regex = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
+    def _parse_with_regex(self, response: requests.Response) -> list[ParsingResult]:
+        regex: re.Pattern[str] = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
         raw_links_list: List[RawLinkParsingResult] = regex.findall(response.text)
         parsing_result_list: List[ParsingResult] = [
             ParsingResult(raw_link, response.url) for raw_link in raw_links_list
