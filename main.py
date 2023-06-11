@@ -1,5 +1,6 @@
 from distutils.command import clean
 from enum import Enum, EnumMeta
+import sys
 from typing import Any, List, Optional, Self, Set, Tuple, Type, TypeAlias
 import requests
 import re
@@ -148,7 +149,10 @@ class Link:
         return self.__str__()
 
     def __eq__(self, __value: object) -> bool:
-        return self.__hash__() == __value.__hash__()
+        return self.path == __value.path
+
+    def __ne__(self, __value: object) -> bool:
+        return self.path == __value.path
 
     def __hash__(self) -> int:
         return hash(f"{self.from_url}{self.path}")
@@ -185,21 +189,15 @@ class Spiderer:
             for link in found_links:
                 url = link.url
 
-                if "opt" in str(url):
-                    print("yes", url)
                 if url in scrapped_url:
-                    if "opt" in str(url):
-                        print("scrapped")
                     continue
 
                 if link in to_be_scrapped:
-                    if "opt" in str(url):
-                        print("to be scrapped")
                     continue
-                if "opt" in str(url):
-                    print("added", url, url.__hash__())
+
                 to_be_scrapped.add(link)
-                len(to_be_scrapped)
+        print(f"Parsing done. Found {len(scrapped_url)} urls !")
+
         return scrapped_url
 
     def parse(self, website_url: Url) -> list[Link]:
@@ -237,13 +235,6 @@ def main():
     urls = Spiderer("https://www.google.fr").scrap()
     # for url in urls:
     #     print(url)
-    url = set()
-    for i in range(2):
-        url1 = Url("https://google.fr")
-        url1 = Link("https://robinzmuda.fr", MatchTypeEnum.HTTP)
-        url.add(url1)
-        url2 = Link("https://robinzmuda.fr", MatchTypeEnum.HTTP)
-        print(url2 in url)
 
 
 if __name__ == "__main__":
