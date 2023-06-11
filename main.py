@@ -204,12 +204,12 @@ class Spiderer:
 
                 to_be_scrapped.add(link)
 
-        print(f"Parsing done. Found {len(scrapped_url)} urls !")
+        print(f"Parsing done. Found {len(scrapped_url)} urls !\n")
 
         return scrapped_url
 
     def parse(self, website_url: Url) -> list[Link]:
-        print(f"parsing: {website_url} ------- {website_url.raw_path}")
+        print(f"parsing: {website_url}")
         try:
             response: requests.Response = self.session.get(website_url.path, verify=False)
         except ConnectionError:
@@ -240,9 +240,12 @@ class Spiderer:
 
 
 def main():
-    urls = Spiderer("https://www.google.fr").scrap()
-    # for url in urls:
-    #     print(url)
+    urls = Spiderer("https://twitter.com").scrap()
+    for url in urls:
+        print(url)
+    # urls dupliques, des /
+    # des urls scannes deux fois
+    # faut faire un putain de manager
 
 
 if __name__ == "__main__":
