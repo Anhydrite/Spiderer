@@ -1,6 +1,8 @@
 from enum import Enum
 import os
 from pathlib import Path
+from shutil import ExecError
+import string
 from typing import Any, Iterator, List, Optional, Self, Set, Tuple, TypeAlias, cast
 from attr import validate
 import bs4
@@ -39,6 +41,9 @@ class MatchTypeEnum(Enum):
 
 
 class Url:
+
+    ALLOWED_URL_CHARACTERS = string.ascii_lowercase + string.digits + "-" + "_" + "." + "~" + "%"
+
     def __init__(self, path: str) -> None:
         if not Url.validate_url(path):
             raise ValueError(f"The url {path} is not valid.")
@@ -47,16 +52,20 @@ class Url:
         self.path: str = self._clean_path_from_parameters(path)
         self.protocol: str = self._parse_protocol(self.path)
         self.tld: str = self._parse_tld(self.path)
+        self.status_code: int = 0
 
     def _parse_tld(self, path: str) -> str:
-        temp_tld: str = path.split(".")[-1]
-        small_temp_tld: str = temp_tld.lower()
-        text_regex: re.Match[str] | None = re.match(r"[a-z]*", small_temp_tld, re.NOFLAG)
-        if not text_regex:
-            raise ValueError(f"TLD is not valid: {small_temp_tld}")
+        if "//" not in path:
+            raise ValueError(f"Could not guess the TLD of {path}, initial")
 
-        tld: str = text_regex.group()
+        cleaned_string = "".join(path.split("//")[1])
+        if "/" in cleaned_string:
+            cleaned_string = "".join(cleaned_string).split("/")[0]
 
+        if "." not in cleaned_string:
+            raise ValueError(f"Could not guess the TLD of {path}, no .")
+
+        tld: str = cleaned_string.split(".")[-1]
         return tld
 
     def _clean_path_from_parameters(self, path: str) -> str:
@@ -65,7 +74,11 @@ class Url:
 
     @property
     def base_url(self) -> str:
-        base_url: str = "".join(self.path.partition(self.tld)[:2])
+        base_url_array = self.path.partition(self.tld)
+        if len(base_url_array) > 2:
+            base_url_array = base_url_array[:2]
+
+        base_url: str = "".join(base_url_array)
         return base_url
 
     @property
@@ -79,14 +92,26 @@ class Url:
     @staticmethod
     def validate_url(url: str) -> bool:
         url = url.strip("")
+
+        if url == "/":
+            return False
+
         validated = validators.url(url)  # type: ignore
         if validated is True:
             return validated
+        if "/" in url:
+            split_string: List[str] = url.split("/")
+            url_path: str
+            if len(split_string) > 1:
+                url_path = split_string[1]
+            else:
+                url_path = split_string[0]
+
+            if all(char.lower() in Url.ALLOWED_URL_CHARACTERS for char in url_path.strip("/")):
+                return True
 
         if not url.startswith("/") and url:
             return Url.validate_url(f"/{url}")
-
-
 
         return False
 
@@ -121,11 +146,15 @@ class Url:
 
 
 class ParsingResult:
-    def __init__(self, raw_parsing_result: re.Match[str], from_url: str) -> None:
-        self.raw_parsing_result: re.Match[str] = raw_parsing_result
-        self.raw_link: str = raw_parsing_result.group("url")
-        self.raw_matched_type: str = raw_parsing_result.group("match_type")
+    def __init__(self, raw_link: str, raw_matched_type: str, from_url: str) -> None:
+        self.raw_link: str = raw_link
+        self.raw_matched_type: str = raw_matched_type
         self.from_url: str = from_url
+
+    @classmethod
+    def from_master_regex(cls, raw_parsing_result: re.Match[str], from_url: str):
+        obj = cls(raw_parsing_result.group("url"),raw_parsing_result.group("match_type"), from_url)
+        return obj
 
 
 class Link:
@@ -137,29 +166,33 @@ class Link:
     ) -> None:
         self.path: str = path
         self.from_url = from_url  # type: ignore
+        self.match_type: Optional[MatchTypeEnum] = match_type
 
         if self.from_url is not None:
             if isinstance(self.from_url, str):
                 self.from_url: Url = Url(self.from_url)
 
-            path = Link.reconstruct_full_url(path, self.from_url)
+            path = self.reconstruct_full_url(path, self.from_url)
 
         else:
             if match_type is MatchTypeEnum.RELATIVE_URL:
                 raise ValueError("from_url parameter cannot be set to None when using a relative URL")
 
         self.url: Url = Url(path)
-        self.match_type: Optional[MatchTypeEnum] = match_type
 
-    @staticmethod
-    def reconstruct_full_url(path: str, from_url: Url) -> str:
+    def reconstruct_full_url(self, path: str, from_url: Url) -> str:
         full_path: str = path
 
-        if path.startswith("./"):
+        if from_url.domain in path:
+            path = path.split(from_url.domain)[1]
+
+        if path.startswith("./") or self.match_type == MatchTypeEnum.RELATIVE_URL:
             clean_path: str = path.split("./")[1]
             full_path = f"{from_url.base_url}/{clean_path}"
-        elif path.startswith("/"):
+        elif path.startswith("/") or self.match_type == MatchTypeEnum.RELATIVE_URL_WITHOUT_POINT:
             full_path = f"{from_url.base_url}{path}"
+        elif self.match_type == MatchTypeEnum.WITHOUT_SLASH:
+            full_path = f"{from_url.base_url}/{path}"
 
         return full_path
 
@@ -197,8 +230,13 @@ class Link:
 
 class Spiderer:
     MASTER_REGEX = (
+        r"(?P<url>(?<!<)(?P<match_type>[a-z]*\:\/\/|\.\/|\/)[0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\.\-\_\~\!\+\,\*\:\@\/]*)"
+    )
+    r"""
+    MASTER_REGEX = (
         r"(?P<url>(?P<match_type>[a-z]*\:\/\/|\.\/|\/)?[0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\.\-\_\~\!\+\,\*\:\@\/]*)"
     )
+    """
 
     def __init__(self, website_url: str) -> None:
         self.website_url: Url = Url(website_url)
@@ -209,27 +247,31 @@ class Spiderer:
         return self.website_url.domain
 
     def scrap(self) -> set[Url]:
-        scrapped_url: Set[Url] = set()
-        to_be_scrapped: Set[Link] = set([Link.from_full_url(self.website_url)])
+        scrapped_url: List[Url] = list()
+        to_be_scrapped: List[Link] = list(set([Link.from_full_url(self.website_url)]))
         while len(to_be_scrapped) > 0:
             current_link: Link = to_be_scrapped.pop()
-            scrapped_url.add(current_link.url)
+            scrapped_url.append(current_link.url)
 
             if current_link.url.domain != self.domain:
                 continue
 
             found_links: List[Link] = self.parse(current_link.url)
-
+            print("J'ai trouvé", len(found_links), "via", current_link.url, found_links)
+            sorted_list = sorted(scrapped_url, key=lambda a: a.path)
+            # print("Voici la liste des scrappés", sorted_list)
             for link in found_links:
                 url: Url = link.url
 
+                print(f"url in scrapped ul {url} ? ", url in scrapped_url)
                 if url in scrapped_url:
                     continue
 
+                print(f"link in to be scrapped {link}?", link in to_be_scrapped)
                 if link in to_be_scrapped:
                     continue
 
-                to_be_scrapped.add(link)
+                to_be_scrapped.append(link)
 
         print(f"Parsing done. Found {len(scrapped_url)} urls !\n")
 
@@ -244,6 +286,11 @@ class Spiderer:
 
         response.encoding = "utf-8"
         response.url = Url(response.url)  # type: ignore
+        print(response.status_code, response.status_code != 200)
+        if response.status_code != 200:
+            website_url.status_code = response.status_code
+            response.url.status_code = response.status_code
+            return []
         urls: list[Link] = self._find_urls(response)
         return urls
 
@@ -267,38 +314,57 @@ class Spiderer:
         for raw_link in raw_links:
             regex: re.Pattern[str] = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
             regexed_link: re.Match[str] | None = regex.match(raw_link)
+
+            raw_link: str
+            raw_matched_type: str = ""
+
             if regexed_link is None:
                 print("ALED", raw_link, regexed_link)
+                raw_link = raw_link
+            else:
+                raw_link = regexed_link.group("url")
+                raw_matched_type = regexed_link.group("match_type")
+
+            if not raw_link or not Url.validate_url(raw_link):
+                print("ALED mais là ", raw_link, regexed_link, raw_link, Url.validate_url(raw_link))
                 continue
-            if not regexed_link.group("url") or not Url.validate_url(regexed_link.group("url")):
-                print("ALED mais là ", raw_link, regexed_link, regexed_link.group("url"), Url.validate_url(regexed_link.group("url")))
-                continue
-            parsing_result = ParsingResult(regexed_link, response.url)
+
+            parsing_result = ParsingResult(raw_link, raw_matched_type, response.url)
             final_link = Link.from_parsing_result(parsing_result)
+            # input(f"Nouveau lien {final_link.url} from {response.url}")
             links.append(final_link)
 
         return links
 
     def _parse_with_regex(self, response: requests.Response) -> List[Link]:
         regex: re.Pattern[str] = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
-        raw_links_list: Iterator[re.Match[str]] = regex.finditer(response.text)
+        response_text = response.text
+        response_text = re.sub(r".*?(?:<\!DOCTYPE).*(?:>)", "", response_text)
+        raw_links_list: Iterator[re.Match[str]] = regex.finditer(response_text)
         parsing_result_list: List[ParsingResult] = []
 
         for raw_link in raw_links_list:
-            print(raw_link, "match", raw_link.group("match_type"),"url", raw_link.group("url"))
             if not raw_link.group("url") or not Url.validate_url(raw_link.group("url")):
                 continue
-            parsing_result_list.append(ParsingResult(raw_link, response.url))
+            try:
+                parsing_result_list.append(ParsingResult.from_master_regex(raw_link, response.url))
+            except Exception:
+                input(f"Probleme avec {raw_link} depuis {response.url}")
 
         links_obj: List[Link] = []
         for raw_link in parsing_result_list:
-            links_obj.append(Link.from_parsing_result(raw_link))
+            try:
+                new_link = Link.from_parsing_result(raw_link)
+            except Exception:
+                continue
+            # input(f"Nouveau lien {new_link.url} from {response.url} {raw_link.raw_link}")
+            links_obj.append(new_link)
 
         return links_obj
 
 
 def main():
-    urls = Spiderer("https://elhacker.info/").scrap()
+    urls = Spiderer("https://robinzmuda.fr/").scrap()
     for url in urls:
         print(url)
     # urls dupliques, des /
