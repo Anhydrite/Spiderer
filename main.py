@@ -1,11 +1,10 @@
 import argparse
+from calendar import c
 from enum import Enum
 import json
-from logging import Logger
-import logging
 from pprint import pprint
 import string
-from typing import Any, Iterator, List, Optional, Self, Set, Dict
+from typing import Any, Dict, Iterator, List, Optional, Set
 from attr import asdict
 import bs4
 import requests
@@ -15,6 +14,8 @@ import validators
 import validators.uri
 from attrs import define, field
 
+from logger import Logger
+
 """
 TODO:
  - Parser les balises <a> dans le site
@@ -22,9 +23,6 @@ TODO:
 """
 
 urllib3.disable_warnings()
-logging.basicConfig(level=logging.INFO)
-# logging.basicConfig(level=logging.NOTSET)
-logger = logging.getLogger("spiderer")
 
 
 class EnumEncoder(json.JSONEncoder):
@@ -40,6 +38,7 @@ class MatchTypeEnum(Enum):
     RELATIVE_URL = "./"
     RELATIVE_URL_WITHOUT_POINT = "/"
     WITHOUT_SLASH = ""
+    STARTING_URL = "starting_url"
 
     @classmethod
     def _missing_(cls, value: object) -> Any:
@@ -61,10 +60,12 @@ class Url:
     path: str = field(init=False)
     protocol: Optional[str] = field(init=False)
     tld: str = field(init=False)
+    status_code: Optional[int] = field(default=None, init=False)
 
     def __attrs_post_init__(self):
         if not Url.validate_url(self.raw_path):
-            raise ValueError(f"The url {self.raw_path} is not valid.")
+            Logger.error(f"The url {self.raw_path} is not valid.")
+
         self.path: str = self._clean_path_from_parameters(self.raw_path)
 
         while self.path.endswith("//") or self.path.endswith(r"\\"):
@@ -169,56 +170,19 @@ class Url:
         return self.path != __value.path  # type: ignore
 
 
-class ParsingResult:
-    def __init__(self, raw_link: str, raw_matched_type: str, from_url: str) -> None:
-        self.raw_link: str = raw_link
-        self.raw_matched_type: str = raw_matched_type
-        self.from_url: str = from_url
-
-    @classmethod
-    def from_master_regex(cls, raw_parsing_result: re.Match[str], from_url: str):
-        obj = cls(raw_parsing_result.group("url"), raw_parsing_result.group("match_type"), from_url)
-        return obj
-
-
 @define
-class Link:
+class FoundLink:
 
-    path: str
+    raw_path: str
+    url: Url = field(default=None)
     match_type: Optional[MatchTypeEnum] = field(default=None)
     from_url: Optional[Url] = field(default=None)
-    url: Optional[Url] = field(default=None)
     scrapped: bool = field(default=False)
 
-    def __attrs_post_init__(self):
-        if self.from_url is not None:
-            self.path = self.reconstruct_full_url(self.path, self.from_url)
-
-        self.url = Url(self.path)
-
-    # def __init__(
-    #     self,
-    #     path: str,
-    #     match_type: Optional[MatchTypeEnum] = None,
-    #     from_url: Optional[str] = None,
-    # ) -> None:
-    #     self.path: str = path
-    #     self.from_url = from_url  # type: ignore
-    #     self.match_type: Optional[MatchTypeEnum] = match_type
-    #     # self.extension: str =
+    # def __attrs_post_init__(self):
     #     if self.from_url is not None:
-    #         if isinstance(self.from_url, str):
-    #             self.from_url: Url = Url(self.from_url)
-
-    #         path = self.reconstruct_full_url(path, self.from_url)
-
-    #     else:
-    #         if match_type is MatchTypeEnum.RELATIVE_URL:
-    #             raise ValueError("from_url parameter cannot be set to None when using a relative URL")
-
-    #         print(f"trouvé  {self.path}")
-
-    #     self.url: Url = Url(path)
+    #         self.path = self.reconstruct_full_url(self.raw_path, self.from_url)
+    #     self.url = Url(self.path if self.path else self.raw_path)
 
     def reconstruct_full_url(self, path: str, from_url: Url) -> str:
         full_path: str = path
@@ -236,16 +200,12 @@ class Link:
 
         return full_path
 
-    @classmethod
-    def from_parsing_result(cls, parsing_result: ParsingResult) -> Self:
-        match_type = MatchTypeEnum(parsing_result.raw_matched_type)
-        url: str = parsing_result.raw_link
-        from_url = Url(parsing_result.from_url) if parsing_result.from_url else None
-        return cls(url, match_type, from_url)
-
-    @classmethod
-    def from_full_url(cls, url: Url) -> Self:
-        return cls(url.path)
+    # @classmethod
+    # def from_parsing_result(cls, parsing_result: ParsingResult) -> "FoundLink":
+    #     match_type = MatchTypeEnum(parsing_result.raw_matched_type)
+    #     url: str = parsing_result.raw_link
+    #     from_url = Url(parsing_result.from_url) if parsing_result.from_url else None
+    #     return cls(url, match_type=match_type, from_url=from_url)
 
     def __str__(self) -> str:
         return str(self.url)
@@ -266,13 +226,13 @@ class Link:
         return self.path == __value.path  # type: ignore
 
     def __hash__(self) -> int:
-        return hash(f"{self.from_url}{self.path}")
+        return hash(f"{self.from_url}{self.raw_path}")
 
 
 @define
 class ScrapResult:
-    scrapped_links: List[Link]
-    not_scrapped_links: List[Link]
+    scrapped_links: List[FoundLink]
+    not_scrapped_links: List[FoundLink]
     iteration_count: int
 
     @property
@@ -291,41 +251,47 @@ class Spiderer:
     def __init__(self, website_url: str, maximum_depth: int = 0, verbose: bool = False) -> None:
         temp_protocol = Url.parse_protocol(website_url)
         if not temp_protocol:
-            global logger
             website_url = f"https://{website_url}"
-            logger.warning(f"No scheme/protocol provided, defaulting to {website_url}")
+            Logger.warning(f"No scheme/protocol provided, defaulting to {website_url}")
 
-        self.website_url: Url = Url(website_url)
+        self.initial_link: FoundLink = FoundLink(website_url, Url(website_url), match_type=MatchTypeEnum.STARTING_URL)
         self.session: requests.Session = requests.Session()
         self.maximum_depth: int = maximum_depth
         self.verbose: bool = verbose
+        self.found_links: Dict[str, FoundLink] = dict()
+
+    def get_or_create_link(self, url: str):
+        found_link = self.found_links.get(url)
+        if found_link is None:
+            found_link = FoundLink(url, Url(url))
+            self.found_links[url] = found_link
+        return found_link
 
     @property
     def domain(self) -> str:
-        return self.website_url.domain
+        return self.initial_link.url.domain
 
     def scrap(self) -> ScrapResult:
-        scrapped_link: List[Link] = list()
-        to_be_scrapped: List[Link] = [Link.from_full_url(self.website_url)]
+        scrapped_link: List[FoundLink] = list()
+        to_be_scrapped: List[FoundLink] = [self.initial_link]
         depth_counter: int = 1
         while len(to_be_scrapped) > 0:
             if self.maximum_depth > 0 and depth_counter > self.maximum_depth:
                 break
             depth_counter += 1
 
-            current_link: Link = to_be_scrapped.pop()
+            current_link: FoundLink = to_be_scrapped.pop()
             current_link.scrapped = True
             scrapped_link.append(current_link)
 
             if current_link.url is None:
-                global logger
-                logger.warning(f"Could not parse {current_link.path}, could not identify url.")
+                Logger.warning(f"Could not parse {current_link.path}, could not identify url.")
                 continue
 
             if current_link.url.domain != self.domain:
                 continue
 
-            found_links: List[Link] = self.parse(current_link.url)
+            found_links: List[FoundLink] = self.parse(current_link.url)
             for link in found_links:
 
                 if link in scrapped_link:
@@ -340,46 +306,47 @@ class Spiderer:
 
         return scrap_result
 
-    def parse(self, website_url: Url) -> List[Link]:
-        global logger
-        logger.info(f"parsing: {website_url}")
+    def parse(self, website_url: Url) -> List[FoundLink]:
+
+        Logger.info(f"parsing: {website_url}")
         try:
             response: requests.Response = self.session.get(website_url.path, verify=False)
         except ConnectionError:
-            raise ValueError("The target is not accessible")
+            Logger.error("The target is not accessible")
+            return []
 
-        response.encoding = "utf-8"
+        website_url.status_code = response.status_code
+
+        # response.encoding = "utf-8"
         if response.apparent_encoding is None:
             return []
 
         if response.status_code != 200:
-            website_url.status_code = response.status_code
             return []
 
-        urls: Set[Link] = self._find_urls(response)
+        urls: Set[FoundLink] = self._find_urls(response)
         return list(urls)
 
-    def _find_urls(self, response: requests.Response) -> Set[Link]:
-        links: Set[Link] = set()
+    def _find_urls(self, response: requests.Response) -> Set[FoundLink]:
+        links: Set[FoundLink] = set()
         links.update(self._parse_with_tag(response))
         links.update(self._parse_with_regex(response))
         # Filter by exts
         return links
 
-    def _parse_with_tag(self, response: requests.Response) -> List[Link]:
-        links: List[Link] = []
+    def _parse_with_tag(self, response: requests.Response) -> List[FoundLink]:
+        links: List[FoundLink] = []
         bs4_response = bs4.BeautifulSoup(response.text, "html.parser")
-        a_tags = bs4_response.find_all()
+        tags = bs4_response.find_all()
         raw_links: List[str] = []
-        # Je pourrais les prendre tous
-        for a_tag in a_tags:
-            if a_tag.has_attr("href"):
-                raw_links.append(a_tag["href"])
-            if a_tag.has_attr("src"):
-                raw_links.append(a_tag["src"])
+
+        for tag in tags:
+            if tag.has_attr("href"):
+                raw_links.append(tag["href"])
+            if tag.has_attr("src"):
+                raw_links.append(tag["src"])
 
         for raw_link in raw_links:
-            # print("ici", raw_link, response.url)
             regex: re.Pattern[str] = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
             regexed_link: re.Match[str] | None = regex.match(raw_link)
 
@@ -387,23 +354,22 @@ class Spiderer:
             raw_matched_type: str = ""
 
             if regexed_link is None:
-                # print("ALED", raw_link, regexed_link)
                 raw_link = raw_link
             else:
                 raw_link = regexed_link.group("url")
                 raw_matched_type = regexed_link.group("match_type")
 
             if not raw_link or not Url.validate_url(raw_link):
-                # print("ALED mais là ", raw_link, regexed_link, raw_link, Url.validate_url(raw_link))
+                Logger.debug(f"Url {raw_link} not valid.")
                 continue
+            # en pleine refonte de ca
+            # self.get_or_create_link(raw_link)
+            final_link = FoundLink(raw_link, Url(raw_link), match_type=raw_matched_type, from_url=Url(response.url))
 
-            parsing_result = ParsingResult(raw_link, raw_matched_type, response.url)
-            final_link = Link.from_parsing_result(parsing_result)
-            # print(f"Nouveau lien {final_link.url} from {response.url}")
             links.append(final_link)
         return links
 
-    def _parse_with_regex(self, response: requests.Response) -> List[Link]:
+    def _parse_with_regex(self, response: requests.Response) -> List[FoundLink]:
         regex: re.Pattern[str] = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
         response_text = response.text
         response_text = re.sub(r".*?(?:<\!DOCTYPE).*(?:>)", "", response_text)
@@ -413,21 +379,19 @@ class Spiderer:
         for raw_link in raw_links_list:
             if not raw_link.group("url") or not Url.validate_url(raw_link.group("url")):
                 continue
+
             try:
                 found_link = ParsingResult.from_master_regex(raw_link, response.url)
                 parsing_result_list.append(found_link)
             except Exception:
-                print(f"Probleme avec {raw_link} depuis {response.url}")
+                Logger.error(f"An error occured parsing {raw_link} from object {response.url}")
 
-        links_obj: List[Link] = []
+        links_obj: List[FoundLink] = []
         for raw_link in parsing_result_list:
             try:
-                new_link = Link.from_parsing_result(raw_link)
-                # input(f"la c'est {raw_link} {new_link.url}")
-
+                new_link = FoundLink.from_parsing_result(raw_link)
             except Exception:
                 continue
-            # input(f"Nouveau lien {new_link.url} from {response.url} {raw_link.raw_link}")
             links_obj.append(new_link)
 
         return links_obj
@@ -437,7 +401,7 @@ def setup_arguments_parser():
     parser = argparse.ArgumentParser(prog="Spiderer", description="Scrap each single url without pity")
     parser.add_argument("url", help="Starting url or domain.")
     parser.add_argument(
-        "-d", "--depth", action="store", default=0, help="Maximum scanning depth, defaults to 0 which is unlimited."
+        "-d", "--depth", action="store", default="0", help="Maximum scanning depth, defaults to 0 which is unlimited."
     )
     parser.add_argument("-v", "--verbose", help="Adds more logs")
     parser.add_argument(
@@ -455,40 +419,43 @@ def parse_arguments(parser: argparse.ArgumentParser):
     args = parser.parse_args()
 
     target: str = args.url
+
     user_max_depth: str = args.depth
     if not user_max_depth.isnumeric():
         raise ValueError(f"The maximum depth must be a number, got {user_max_depth}")
+
     max_depth: int = int(user_max_depth)
     verbose: bool = args.verbose
     scrap_result = Spiderer(target, max_depth, verbose).scrap()
 
-    # pprint(asdict(scrap_result))
-
-    print("test", args.json)
     if args.json != "":
+        dict_res = asdict(scrap_result)
         if args.json is not None:
             with open(args.json, "w") as f:
-                json.dump(asdict(scrap_result), cls=EnumEncoder, indent=4, fp=f)
-        pprint(asdict(scrap_result))
+                json.dump(asdict(dict_res), cls=EnumEncoder, indent=4, fp=f)
+        Logger.info(json.dumps(dict_res, cls=EnumEncoder, indent=4))
     else:
+        # Removes duplicates among scrapped and not scapped links
         all_links = set(scrap_result.scrapped_links)
         all_links.update(scrap_result.not_scrapped_links)
+
+        # filters links by source url
         smart_from_dict = dict()
-        print(all_links)
         for link in all_links:
             if link.from_url is None:
                 continue
             smart_from_dict.setdefault(link.from_url, []).append(link)
+
+        # Default print by url source
         for key, value in smart_from_dict.items():
-            print(key)
+            Logger.info(key)
             for link in value:
-                print(" " * 4, link)
-    global logger
-    logger.info(f"Found {scrap_result.links_count} urls in {scrap_result.iteration_count} iteration(s).")
+                Logger.info(" " * 4, link)
+
+    Logger.result(f"Found {scrap_result.links_count} urls in {scrap_result.iteration_count} iteration(s).")
 
 
 def main():
-
     parser = setup_arguments_parser()
     parse_arguments(parser)
     # links = Spiderer("https://robinzmuda.fr/").scrap()
