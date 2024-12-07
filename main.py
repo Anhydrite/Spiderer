@@ -343,7 +343,7 @@ class Spiderer:
 
     def parse(self, scrapped_finding: Finding) -> List[Finding]:
 
-        Logger.info(f"parsing: {scrapped_finding}")
+        Logger.info(f"Parsing: {scrapped_finding}")
         try:
             response: requests.Response = self.session.get(scrapped_finding.url.path, verify=False)
         except requests.exceptions.ConnectionError as e:
@@ -355,6 +355,7 @@ class Spiderer:
         # response.encoding = "utf-8"
         # Filters image, weird files
         if response.apparent_encoding is None:
+            Logger.debug("Apparent encoding is None, which means the the content will certainly be encoded. Skipping.")
             return []
 
         if response.status_code != 200:
@@ -401,11 +402,15 @@ class Spiderer:
             #     raw_link = raw_link
             # else:
             if regexed_link is None:
-                Logger.warning(f"Regex could not match raw_link {raw_link}")
+                Logger.debug(f"Regex could not match raw_link {raw_link}")
                 continue
 
             raw_path: str = regexed_link.group("url")
-            raw_matched_type = MatchTypeEnum(regexed_link.group("match_type"))
+            try:
+                raw_matched_type = MatchTypeEnum(regexed_link.group("match_type"))
+            except ValueError:
+                Logger.debug(f"Invalid match type {regexed_link.group('match_type')} for {raw_path}")
+                continue
 
             new_finding = FindingsManager.create_finding(raw_path, raw_matched_type, from_url=source_url)
 
@@ -430,7 +435,11 @@ class Spiderer:
             if not raw_link.group("url"):
                 continue
             raw_path: str = raw_link.group("url")
-            raw_matched_type: MatchTypeEnum = MatchTypeEnum(raw_link.group("match_type"))
+            try:
+                raw_matched_type: MatchTypeEnum = MatchTypeEnum(raw_link.group("match_type"))
+            except ValueError:
+                Logger.debug(f"Invalid match type {raw_link.group('match_type')} for {raw_path}")
+                continue
 
             new_finding = FindingsManager.create_finding(raw_path, raw_matched_type, from_url=source_url)
 

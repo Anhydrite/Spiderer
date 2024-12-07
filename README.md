@@ -25,9 +25,9 @@ python main.py https://example.com -j output.json
 * Add filter by extension 
 * Add filter by status code
 * Add multithreading
-* Handles froms 
-* Provides informations about the context where the link was found (.i.e forms)
-
+* Handle froms 
+* Provide informations about the context where the link was found (.i.e forms)
+* Handle verbose 
 
 ## Contributing
 Contributions are welcome!
