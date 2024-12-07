@@ -1,10 +1,9 @@
 import argparse
-from calendar import c
 from enum import Enum
 import json
 from pprint import pprint
 import string
-from typing import Any, Dict, Iterator, List, Optional, Set
+from typing import Any, Dict, Iterator, List, Optional, Set, cast
 from attr import asdict
 import bs4
 import requests
@@ -16,13 +15,18 @@ from attrs import define, field
 
 from logger import Logger
 
+urllib3.disable_warnings()
+
+
 """
 TODO:
- - Parser les balises <a> dans le site
- - Gérer les errurs 404 etc
+ - check avec le full domain (tester decrawler des osus domaines et vérif uqe ca sorte pas)
+ - prendre d'autres tags que href et src
+ - validate, check le startswith / 
+ - multi thread le bouzin
+ - option pour trier par extensio et status code
+ - bug avec ca
 """
-
-urllib3.disable_warnings()
 
 
 class EnumEncoder(json.JSONEncoder):
@@ -51,32 +55,32 @@ class MatchTypeEnum(Enum):
         return super()._missing_(value)
 
 
-@define
+@define(unsafe_hash=True)
 class Url:
 
     ALLOWED_URL_CHARACTERS = string.ascii_lowercase + string.digits + "-" + "_" + "." + "~" + "%"
 
-    raw_path: str = field()
-    path: str = field(init=False)
+    path: str = field(hash=True)
+    base_path: str = field(init=False)
+    domain: str = field(init=False)
     protocol: Optional[str] = field(init=False)
     tld: str = field(init=False)
     status_code: Optional[int] = field(default=None, init=False)
 
     def __attrs_post_init__(self):
-        if not Url.validate_url(self.raw_path):
-            Logger.error(f"The url {self.raw_path} is not valid.")
 
-        self.path: str = self._clean_path_from_parameters(self.raw_path)
-
-        while self.path.endswith("//") or self.path.endswith(r"\\"):
-            self.path = self.path[:-1]
+        self.path: str = Url._clean_path_from_parameters(self.path)
+        self.tld = Url._parse_tld(self.path)
+        self.base_path: str = Url._parse_base_path(self.path, self.tld)
+        self.domain = Url._parse_domain(self.base_path)
 
         temp_protocol = Url.parse_protocol(self.path)
 
         self.protocol: Optional[str] = temp_protocol
         self.tld: str = self._parse_tld(self.path)
 
-    def _parse_tld(self, path: str) -> str:
+    @staticmethod
+    def _parse_tld(path: str) -> str:
         if "//" not in path:
             raise ValueError(f"Could not guess the TLD of {path}, initial")
 
@@ -90,52 +94,27 @@ class Url:
         tld: str = cleaned_string.split(".")[-1]
         return tld
 
-    def _clean_path_from_parameters(self, path: str) -> str:
+    @staticmethod
+    def _clean_path_from_parameters(path: str) -> str:
         clean_path: str = path.split("?")[0]
         return clean_path
 
-    @property
-    def base_url(self) -> str:
-        base_url_array = self.path.partition(self.tld)
+    @staticmethod
+    def _parse_base_path(path: str, tld: str) -> str:
+        base_url_array = path.partition(tld)
         if len(base_url_array) > 2:
             base_url_array = base_url_array[:2]
 
         base_url: str = "".join(base_url_array)
         return base_url
 
-    @property
-    def domain(self) -> str:
-        domain: str = self.base_url.split("://")[1]
+    @staticmethod
+    def _parse_domain(base_url: str) -> str:
+        domain: str = base_url.split("://")[1]
 
         domain_regex: re.Pattern[str] = re.compile(r"[a-z\.]*")
         domain = domain_regex.match(domain).string  # type: ignore
         return domain
-
-    @staticmethod
-    def validate_url(url: str) -> bool:
-        url = url.strip("")
-
-        if url == "/":
-            return False
-
-        validated = validators.url(url)  # type: ignore
-        if validated is True:
-            return validated
-        if "/" in url:
-            split_string: List[str] = url.split("/")
-            url_path: str
-            if len(split_string) > 1:
-                url_path = split_string[1]
-            else:
-                url_path = split_string[0]
-
-            if all(char.lower() in Url.ALLOWED_URL_CHARACTERS for char in url_path.strip("/")):
-                return True
-
-        if not url.startswith("/") and url:
-            return Url.validate_url(f"/{url}")
-
-        return False
 
     @staticmethod
     def parse_protocol(path: str) -> Optional[str]:
@@ -152,60 +131,21 @@ class Url:
     def __repr__(self) -> str:
         return self.__str__()
 
-    def __hash__(self) -> int:
-        path_without_slash: str = self.path.replace("/", "")
-        """Because we can have www.google.fr and www.google.fr/ that are not differents links but www.google.fr/test is different from www.google.fr/test/"""
-        return hash(path_without_slash)
-
-    def __eq__(self, __value) -> bool:
-        if not hasattr(__value, "path"):
-            return False
-
-        return self.path == __value.path  # type: ignore
-
-    def __ne__(self, __value: object) -> bool:
-        if not hasattr(__value, "path"):
-            return False
-
-        return self.path != __value.path  # type: ignore
+    # def __hash__(self) -> int:
+    #     path_without_slash: str = self.path.replace("/", "")
+    #     """Because we can have www.google.fr and www.google.fr/ that are not differents links but www.google.fr/test is different from www.google.fr/test/"""
+    #     return hash(path_without_slash)
 
 
-@define
-class FoundLink:
+@define(unsafe_hash=True)
+class Finding:
 
-    raw_path: str
-    url: Url = field(default=None)
+    raw_path: str = field(hash=True)
+    url: Url = field(hash=True)
     match_type: Optional[MatchTypeEnum] = field(default=None)
     from_url: Optional[Url] = field(default=None)
     scrapped: bool = field(default=False)
-
-    # def __attrs_post_init__(self):
-    #     if self.from_url is not None:
-    #         self.path = self.reconstruct_full_url(self.raw_path, self.from_url)
-    #     self.url = Url(self.path if self.path else self.raw_path)
-
-    def reconstruct_full_url(self, path: str, from_url: Url) -> str:
-        full_path: str = path
-
-        if from_url.domain in path:
-            path = path.split(from_url.domain)[1]
-
-        if path.startswith("./") or self.match_type == MatchTypeEnum.RELATIVE_URL:
-            clean_path: str = path.split("./")[1]
-            full_path = f"{from_url.base_url}/{clean_path}"
-        elif path.startswith("/") or self.match_type == MatchTypeEnum.RELATIVE_URL_WITHOUT_POINT:
-            full_path = f"{from_url.base_url}{path}"
-        elif self.match_type == MatchTypeEnum.WITHOUT_SLASH:
-            full_path = f"{from_url.base_url}/{path}"
-
-        return full_path
-
-    # @classmethod
-    # def from_parsing_result(cls, parsing_result: ParsingResult) -> "FoundLink":
-    #     match_type = MatchTypeEnum(parsing_result.raw_matched_type)
-    #     url: str = parsing_result.raw_link
-    #     from_url = Url(parsing_result.from_url) if parsing_result.from_url else None
-    #     return cls(url, match_type=match_type, from_url=from_url)
+    status_code: Optional[int] = field(init=False, default=None)
 
     def __str__(self) -> str:
         return str(self.url)
@@ -214,10 +154,10 @@ class FoundLink:
         return self.__str__()
 
     def __eq__(self, __value: object) -> bool:
-        if not hasattr(__value, "path"):
+        if not isinstance(__value, Finding):
             return False
 
-        return self.path == __value.path  # type: ignore
+        return self.url == __value.url  # type: ignore
 
     def __ne__(self, __value: object) -> bool:
         if not hasattr(__value, "path"):
@@ -225,14 +165,112 @@ class FoundLink:
 
         return self.path == __value.path  # type: ignore
 
-    def __hash__(self) -> int:
-        return hash(f"{self.from_url}{self.raw_path}")
+
+class FindingsManager:
+    findings: Dict[int, Finding] = {}
+
+    def __init__(self, reset=False) -> None:
+        if not reset:
+            Logger.warning(
+                "FindingsManager must be called with reset=True to reinitialize all findings. Otherwise consider removing parenthese"
+            )
+            return
+
+        self.findings = {}
+
+    @staticmethod
+    def create_finding(raw_path: str, match_type: MatchTypeEnum, from_url: Optional[Url] = None) -> Optional[Finding]:
+        # Check raw path is valid
+        # Reconstruct full path
+        if from_url is None and match_type != MatchTypeEnum.STARTING_URL:
+            Logger.warning(
+                f"Error creating {raw_path} from url is None and match type is not starting url. Finding will not be created."
+            )
+            return None
+
+        if match_type == MatchTypeEnum.STARTING_URL:
+            corresponding_url = Url(raw_path)
+        else:
+            from_url = cast(Url, from_url)
+            clean_path = FindingsManager._reconstruct_and_clean_full_url(raw_path, from_url, match_type)
+            corresponding_url = FindingsManager.create_url(clean_path)
+
+        if corresponding_url is None:
+            Logger.warning(f"Invalid url {raw_path} provided. Finding will not be created.")
+            return None
+
+        finding = Finding(raw_path, url=corresponding_url, match_type=match_type, from_url=from_url)
+
+        finding_hash = hash(finding)
+        if finding_hash in FindingsManager.findings:
+            return None
+
+        FindingsManager.findings[hash(finding)] = finding
+        return finding
+
+    @staticmethod
+    def create_url(raw_path: str, source_url: Optional[Url] = None) -> Optional[Url]:
+        if not FindingsManager.validate_url(raw_path):
+            return None
+
+        return Url(raw_path)
+
+    @staticmethod
+    def _reconstruct_and_clean_full_url(raw_path: str, from_url: Url, match_type: MatchTypeEnum) -> str:
+        full_path: str = raw_path
+
+        if from_url.domain in raw_path:
+            raw_path = raw_path.split(from_url.domain)[1]
+
+        if raw_path.startswith("./") or match_type == MatchTypeEnum.RELATIVE_URL:
+            clean_raw_path: str = raw_path.split("./")[1]
+            full_path = f"{from_url.base_path}/{clean_raw_path}"
+        elif raw_path.startswith("/") or match_type == MatchTypeEnum.RELATIVE_URL_WITHOUT_POINT:
+            full_path = f"{from_url.base_path}{raw_path}"
+        elif match_type == MatchTypeEnum.WITHOUT_SLASH:
+            full_path = f"{from_url.base_path}/{raw_path}"
+
+        while full_path.endswith("//") or full_path.endswith(r"\\"):
+            full_path = full_path[:-1]
+
+        if full_path.endswith("/") and full_path[:-1] == from_url.domain:
+            full_path = full_path[:-1]
+
+        return full_path
+
+    @staticmethod
+    def validate_url(path: str) -> bool:
+        path = path.strip("")
+
+        if path == "/":
+            return False
+
+        validated = validators.url(path)  # type: ignore
+        if validated is True:
+            return validated
+
+        if "/" in path:
+            split_string: List[str] = path.split("/")
+            url_path: str
+            if len(split_string) > 1:
+                url_path = split_string[1]
+            else:
+                url_path = split_string[0]
+
+            if all(char.lower() in Url.ALLOWED_URL_CHARACTERS for char in url_path.strip("/")):
+                return True
+
+        # Mystique
+        if not path.startswith("/") and path:
+            return FindingsManager.validate_url(f"/{path}")
+
+        return False
 
 
 @define
 class ScrapResult:
-    scrapped_links: List[FoundLink]
-    not_scrapped_links: List[FoundLink]
+    scrapped_links: List[Finding]
+    not_scrapped_links: List[Finding]
     iteration_count: int
 
     @property
@@ -241,7 +279,7 @@ class ScrapResult:
 
 
 class Spiderer:
-    MASTER_REGEX = r"(?P<url>(?<!<)(?P<match_type>[a-z]*\:\/\/|\.\/|\/)[0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\.\-\_\~\!\+\,\*\:\@\/]*)"
+    MASTER_REGEX = r"(?P<url>(?<!<)(?P<match_type>[a-z]*\:\/\/|\.\/|\/)[a-zA-Z1-9][0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\.\-\_\~\!\+\,\*\:\@\/]*)"
     r"""
     MASTER_REGEX = (
         r"(?P<url>(?P<match_type>[a-z]*\:\/\/|\.\/|\/)?[0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\.\-\_\~\!\+\,\*\:\@\/]*)"
@@ -254,93 +292,102 @@ class Spiderer:
             website_url = f"https://{website_url}"
             Logger.warning(f"No scheme/protocol provided, defaulting to {website_url}")
 
-        self.initial_link: FoundLink = FoundLink(website_url, Url(website_url), match_type=MatchTypeEnum.STARTING_URL)
+        initial_link = FindingsManager.create_finding(website_url, match_type=MatchTypeEnum.STARTING_URL)
+        if initial_link is None:
+            Logger.error(f"Could not create initial link from {website_url}")
+            raise ValueError(f"Could not create initial link from {website_url}")
+
+        self.initial_link: Finding = initial_link
         self.session: requests.Session = requests.Session()
         self.maximum_depth: int = maximum_depth
         self.verbose: bool = verbose
-        self.found_links: Dict[str, FoundLink] = dict()
-
-    def get_or_create_link(self, url: str):
-        found_link = self.found_links.get(url)
-        if found_link is None:
-            found_link = FoundLink(url, Url(url))
-            self.found_links[url] = found_link
-        return found_link
 
     @property
-    def domain(self) -> str:
+    def initial_full_domain(self) -> str:
         return self.initial_link.url.domain
 
     def scrap(self) -> ScrapResult:
-        scrapped_link: List[FoundLink] = list()
-        to_be_scrapped: List[FoundLink] = [self.initial_link]
+        scrapped_link: List[Finding] = list()
+        to_be_scrapped: List[Finding] = [self.initial_link]
         depth_counter: int = 1
         while len(to_be_scrapped) > 0:
             if self.maximum_depth > 0 and depth_counter > self.maximum_depth:
                 break
             depth_counter += 1
 
-            current_link: FoundLink = to_be_scrapped.pop()
-            current_link.scrapped = True
-            scrapped_link.append(current_link)
+            current_finding: Finding = to_be_scrapped.pop()
+            current_finding.scrapped = True
+            scrapped_link.append(current_finding)
 
-            if current_link.url is None:
-                Logger.warning(f"Could not parse {current_link.path}, could not identify url.")
+            if current_finding.url is None:
+                Logger.warning(f"Could not parse {current_finding.path}, could not identify url.")
                 continue
 
-            if current_link.url.domain != self.domain:
+            if current_finding.url.domain != self.initial_full_domain:
                 continue
 
-            found_links: List[FoundLink] = self.parse(current_link.url)
-            for link in found_links:
+            found_findings: List[Finding] = self.parse(current_finding)
+            for found_finding in found_findings:
 
-                if link in scrapped_link:
+                if found_finding in scrapped_link:
                     continue
 
-                if link in to_be_scrapped:
+                if found_finding in to_be_scrapped:
                     continue
 
-                to_be_scrapped.append(link)
+                to_be_scrapped.append(found_finding)
 
         scrap_result = ScrapResult(scrapped_link, to_be_scrapped, depth_counter - 1)
 
         return scrap_result
 
-    def parse(self, website_url: Url) -> List[FoundLink]:
+    def parse(self, scrapped_finding: Finding) -> List[Finding]:
 
-        Logger.info(f"parsing: {website_url}")
+        Logger.info(f"parsing: {scrapped_finding}")
         try:
-            response: requests.Response = self.session.get(website_url.path, verify=False)
-        except ConnectionError:
-            Logger.error("The target is not accessible")
+            response: requests.Response = self.session.get(scrapped_finding.url.path, verify=False)
+        except Exception as e:
+            Logger.error(f"The target is not accessible: {e}")
             return []
 
-        website_url.status_code = response.status_code
+        scrapped_finding.status_code = response.status_code
 
         # response.encoding = "utf-8"
+        # Filters image, weird files
         if response.apparent_encoding is None:
             return []
 
         if response.status_code != 200:
-            return []
+            Logger.warning(f"Status code {response.status_code} for {scrapped_finding.url}")
+            # return []
 
-        urls: Set[FoundLink] = self._find_urls(response)
+        urls: List[Finding] = self._find_urls(response, scrapped_finding.url)
         return list(urls)
 
-    def _find_urls(self, response: requests.Response) -> Set[FoundLink]:
-        links: Set[FoundLink] = set()
-        links.update(self._parse_with_tag(response))
-        links.update(self._parse_with_regex(response))
+    def _find_urls(self, response: requests.Response, source_url: Url) -> List[Finding]:
+        links: List[Finding] = list()
+        links.extend(self._parse_with_tag(response, source_url))
+        # return links
+        new_regex_findings: List[Finding] = self._parse_with_regex(response, source_url)
+
+        # Give priority to tag findings
+        for new_regex_finding in new_regex_findings:
+            if new_regex_finding in links:
+                continue
+            links.append(new_regex_finding)
+
         # Filter by exts
         return links
 
-    def _parse_with_tag(self, response: requests.Response) -> List[FoundLink]:
-        links: List[FoundLink] = []
+    def _parse_with_tag(self, response: requests.Response, source_url: Url) -> List[Finding]:
+        findings: List[Finding] = []
+
         bs4_response = bs4.BeautifulSoup(response.text, "html.parser")
         tags = bs4_response.find_all()
         raw_links: List[str] = []
 
         for tag in tags:
+
             if tag.has_attr("href"):
                 raw_links.append(tag["href"])
             if tag.has_attr("src"):
@@ -350,51 +397,50 @@ class Spiderer:
             regex: re.Pattern[str] = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
             regexed_link: re.Match[str] | None = regex.match(raw_link)
 
-            raw_link: str
-            raw_matched_type: str = ""
-
+            # if regexed_link is None:
+            #     raw_link = raw_link
+            # else:
             if regexed_link is None:
-                raw_link = raw_link
-            else:
-                raw_link = regexed_link.group("url")
-                raw_matched_type = regexed_link.group("match_type")
-
-            if not raw_link or not Url.validate_url(raw_link):
-                Logger.debug(f"Url {raw_link} not valid.")
+                Logger.warning(f"Regex could not match raw_link {raw_link}")
                 continue
-            # en pleine refonte de ca
-            # self.get_or_create_link(raw_link)
-            final_link = FoundLink(raw_link, Url(raw_link), match_type=raw_matched_type, from_url=Url(response.url))
 
-            links.append(final_link)
-        return links
+            raw_path: str = regexed_link.group("url")
+            raw_matched_type = MatchTypeEnum(regexed_link.group("match_type"))
 
-    def _parse_with_regex(self, response: requests.Response) -> List[FoundLink]:
+            new_finding = FindingsManager.create_finding(raw_path, raw_matched_type, from_url=source_url)
+
+            if new_finding is None or new_finding in findings:
+                Logger.debug(f"New finding {raw_path} else invalid or already in existing findings")
+                continue
+
+            findings.append(new_finding)
+
+        return findings
+
+    def _parse_with_regex(self, response: requests.Response, source_url: Url) -> List[Finding]:
         regex: re.Pattern[str] = re.compile(Spiderer.MASTER_REGEX, re.MULTILINE)
         response_text = response.text
         response_text = re.sub(r".*?(?:<\!DOCTYPE).*(?:>)", "", response_text)
+
+        findings: List[Finding] = list()
+
         raw_links_list: Iterator[re.Match[str]] = regex.finditer(response_text)
-        parsing_result_list: List[ParsingResult] = []
 
         for raw_link in raw_links_list:
-            if not raw_link.group("url") or not Url.validate_url(raw_link.group("url")):
+            if not raw_link.group("url"):
+                continue
+            raw_path: str = raw_link.group("url")
+            raw_matched_type: MatchTypeEnum = MatchTypeEnum(raw_link.group("match_type"))
+
+            new_finding = FindingsManager.create_finding(raw_path, raw_matched_type, from_url=source_url)
+
+            if new_finding is None or new_finding in findings:
+                Logger.debug(f"New finding {raw_path} else invalid or already in existing findings")
                 continue
 
-            try:
-                found_link = ParsingResult.from_master_regex(raw_link, response.url)
-                parsing_result_list.append(found_link)
-            except Exception:
-                Logger.error(f"An error occured parsing {raw_link} from object {response.url}")
+            findings.append(new_finding)
 
-        links_obj: List[FoundLink] = []
-        for raw_link in parsing_result_list:
-            try:
-                new_link = FoundLink.from_parsing_result(raw_link)
-            except Exception:
-                continue
-            links_obj.append(new_link)
-
-        return links_obj
+        return findings
 
 
 def setup_arguments_parser():

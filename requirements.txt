@@ -1,0 +1,13 @@
+attrs @ file:///io/perseverance-python-buildout/croot/attrs_1731700421622/work
+beautifulsoup4 @ file:///work/perseverance-python-buildout/croot/beautifulsoup4-split_1728385754779/work
+Brotli @ file:///work/perseverance-python-buildout/croot/brotli-split_1728385783584/work
+certifi @ file:///work/perseverance-python-buildout/croot/certifi_1728386469937/work/certifi
+charset-normalizer @ file:///croot/charset-normalizer_1721748349566/work
+idna @ file:///work/perseverance-python-buildout/croot/idna_1728385935861/work
+PySocks @ file:///work/perseverance-python-buildout/croot/pysocks_1728386193338/work
+requests @ file:///croot/requests_1730999120400/work
+setuptools==75.1.0
+soupsieve @ file:///work/perseverance-python-buildout/croot/soupsieve_1728385708765/work
+urllib3 @ file:///work/perseverance-python-buildout/croot/urllib3_1728386864107/work
+validators==0.34.0
+wheel==0.44.0
