@@ -2,9 +2,10 @@
 ## Description
 Spiderer is a tool based on the A* algorithm that crawls a website and returns all URLs found within all acccessible pages. 
 It is written in Python and uses the Requests library to make HTTP requests.
+Tested on Python 3.10.12
 
 ## Installation
-To install Spiderer, you will need to install its dependencies:
+To run Spiderer, you will need to install its dependencies:
 ```
 pip install -r requirements.txt
 ```
