@@ -28,6 +28,10 @@ python main.py https://example.com -j output.json
 * Handle froms 
 * Provide informations about the context where the link was found (.i.e forms)
 * Handle verbose 
+* Configure max timeout
+* Configure header or auth token
+* Add start, stop timestamp and runtime
+* Parse sitemaps and robots.txt
 
 ## Contributing
 Contributions are welcome!

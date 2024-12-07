@@ -82,14 +82,15 @@ class Url:
     @staticmethod
     def _parse_tld(path: str) -> str:
         if "//" not in path:
-            raise ValueError(f"Could not guess the TLD of {path}, initial")
+            raise ValueError(f"Could not guess the TLD of {path}")
 
         cleaned_string = "".join(path.split("//")[1])
         if "/" in cleaned_string:
             cleaned_string = "".join(cleaned_string).split("/")[0]
 
         if "." not in cleaned_string:
-            raise ValueError(f"Could not guess the TLD of {path}, no .")
+            raise ValueError(f"Could not guess the TLD of {path}, cleaned string {cleaned_string}")
+            return ""
 
         tld: str = cleaned_string.split(".")[-1]
         return tld
@@ -189,7 +190,7 @@ class FindingsManager:
             return None
 
         if match_type == MatchTypeEnum.STARTING_URL:
-            corresponding_url = Url(raw_path)
+            corresponding_url = FindingsManager.create_url(raw_path)
         else:
             from_url = cast(Url, from_url)
             clean_path = FindingsManager._reconstruct_and_clean_full_url(raw_path, from_url, match_type)
@@ -209,7 +210,7 @@ class FindingsManager:
         return finding
 
     @staticmethod
-    def create_url(raw_path: str, source_url: Optional[Url] = None) -> Optional[Url]:
+    def create_url(raw_path: str) -> Optional[Url]:
         if not FindingsManager.validate_url(raw_path):
             return None
 
@@ -248,6 +249,11 @@ class FindingsManager:
         validated = validators.url(path)  # type: ignore
         if validated is True:
             return validated
+
+        try:
+            Url._parse_tld(path)
+        except ValueError:
+            return False
 
         if "/" in path:
             split_string: List[str] = path.split("/")
@@ -346,7 +352,7 @@ class Spiderer:
         Logger.info(f"Parsing: {scrapped_finding}")
         try:
             response: requests.Response = self.session.get(scrapped_finding.url.path, verify=False)
-        except requests.exceptions.ConnectionError as e:
+        except Exception as e:
             Logger.error(f"The target is not accessible: {e}")
             return []
 
