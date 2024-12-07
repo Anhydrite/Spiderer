@@ -1,5 +1,3 @@
-Crawl a website and returns all URLs found. 
-Based on the A* algorithm
 # Spiderer
 ## Description
 Spiderer is a tool based on the A* algorithm that crawls a website and returns all URLs found within all acccessible pages. 
