@@ -346,7 +346,7 @@ class Spiderer:
         Logger.info(f"parsing: {scrapped_finding}")
         try:
             response: requests.Response = self.session.get(scrapped_finding.url.path, verify=False)
-        except Exception as e:
+        except requests.exceptions.ConnectionError as e:
             Logger.error(f"The target is not accessible: {e}")
             return []
 
