@@ -1,0 +1,12 @@
+attrs==24.2.0
+beautifulsoup4==4.12.3
+bs4==0.0.2
+certifi==2024.8.30
+charset-normalizer==3.4.0
+idna==3.10
+pipx==1.7.1
+requests==2.32.3
+soupsieve==2.6
+urllib3==2.2.3
+userpath==1.9.2
+validators==0.34.0
