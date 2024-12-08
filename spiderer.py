@@ -664,7 +664,7 @@ def parse_arguments(parser: argparse.ArgumentParser):
         dict_res = asdict(scrap_result)
         if args.json is not None:
             with open(args.json, "w") as f:
-                json.dump(asdict(dict_res), cls=EnumEncoder, indent=4, fp=f)
+                json.dump(dict_res, cls=EnumEncoder, indent=4, fp=f)
         Logger.info(json.dumps(dict_res, cls=EnumEncoder, indent=4))
     else:
         # Removes duplicates among scrapped and not scapped links
@@ -685,7 +685,7 @@ def parse_arguments(parser: argparse.ArgumentParser):
                 Logger.info(" " * 4, link)
 
     Logger.result(
-        f"Found {scrap_result.links_count} urls with {scrap_result.iteration_count} iteration(s) in {scrap_result.duration:.2f} second(s)."
+        f"Found {scrap_result.links_count} url(s) with {scrap_result.iteration_count} iteration(s) in {scrap_result.duration:.2f} second(s)."
     )
 
 
