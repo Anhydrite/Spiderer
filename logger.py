@@ -1,15 +1,14 @@
 import logging
-from typing import List
 
 
 class CustomFormatter(logging.Formatter):
 
-    grey = "\x1b[38;5;244m"  # Gris
-    white = "\x1b[38;5;255m"  # Blanc (plus visible)
+    grey = "\x1b[38;5;244m"  # Grey
+    white = "\x1b[38;5;255m"  # Whiter white
     orange = "\x1b[38;5;214m"  # Orange
-    red = "\x1b[31;20m"  # Rouge
-    bold_red = "\x1b[31;1m"  # Rouge en gras
-    green_violet = "\x1b[38;5;46m"  # Vert avec fond violet
+    red = "\x1b[31;20m"  # Red
+    bold_red = "\x1b[31;1m"  # Bold red
+    green = "\x1b[38;5;46m"  # Flashy green
     reset = "\x1b[0m"
 
     format_ = "%(asctime)s.%(msecs)03d  - %(name)s - %(message)s"
@@ -22,7 +21,7 @@ class CustomFormatter(logging.Formatter):
         logging.WARNING: orange + format_ + reset,
         logging.ERROR: red + format_ + reset,
         logging.CRITICAL: bold_red + format_ + reset,
-        logging.RESULT: green_violet + format_ + reset,  # type: ignore
+        logging.RESULT: green + format_ + reset,  # type: ignore
     }
 
     def format(self, record):
