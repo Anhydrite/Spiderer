@@ -18,6 +18,7 @@ python spiderer.py https://example.com
 ```
 ### JSON output
 You can output json using the -j option. If you provide a path, the output will be stored in a file as well.
+The JSON output provides a lot more information than the default output.
 ```
 python spiderer.py https://example.com -j output.json
 ```
