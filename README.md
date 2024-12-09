@@ -16,13 +16,14 @@ To use Spiderer, you will need to provide a starting URL or domain.
 ```
 python spiderer.py https://example.com 
 ```
+![alt text](assets/basic.png)
 ### JSON output
 You can output json using the -j option. If you provide a path, the output will be stored in a file as well.
 The JSON output provides a lot more information than the default output.
 ```
 python spiderer.py https://example.com -j output.json
 ```
-
+![alt text](assets/json_output.png)
 ### Remove external links
 You can remove links that are not from the initial domain using the --remove-external or -re option.
 
