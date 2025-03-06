@@ -475,25 +475,25 @@ class Spiderer:
         tags = bs4_response.find_all()
         raw_links: List[Tuple[str, str]] = []
 
+        allowed_atttributes = [
+            "action",
+            "archive",
+            "background",
+            "cite",
+            "classid",
+            "codebase",
+            "data",
+            "formaction",
+            "href",
+            "icon",
+            "longdesc",
+            "manifest",
+            "poster",
+            "profile",
+            "src",
+            "usemap",
+        ]
         for tag in tags:
-            allowed_atttributes = [
-                "action",
-                "archive",
-                "background",
-                "cite",
-                "classid",
-                "codebase",
-                "data",
-                "formaction",
-                "href",
-                "icon",
-                "longdesc",
-                "manifest",
-                "poster",
-                "profile",
-                "src",
-                "usemap",
-            ]
             for attribute in allowed_atttributes:
                 if tag.has_attr(attribute):
                     raw_links.append((tag.name, tag[attribute]))
