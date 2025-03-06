@@ -283,8 +283,8 @@ class ScrapResult:
     scrapped_links: List[Finding]
     not_scrapped_links: List[Finding]
     iteration_count: int
-    start_timestamt: float
-    end_timstamp: float
+    start_timestamp: float
+    end_timestamp: float
     duration: float
 
     @property
@@ -667,7 +667,7 @@ def parse_arguments(parser: argparse.ArgumentParser):
                 json.dump(dict_res, cls=EnumEncoder, indent=4, fp=f)
         Logger.info(json.dumps(dict_res, cls=EnumEncoder, indent=4))
     else:
-        # Removes duplicates among scrapped and not scapped links
+        # Removes duplicates among scrapped and not scrapped links
         all_links = set(scrap_result.scrapped_links)
         all_links.update(scrap_result.not_scrapped_links)
 
